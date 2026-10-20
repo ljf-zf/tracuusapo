@@ -36,7 +36,7 @@ function fmtDate(value) {
 }
 function renderOrders(data) {
   $("result-count").textContent = `${data.count} đơn`;
-  $("result-subtitle").textContent = `Mã kết thúc bằng ${data.last4} · Đã kiểm tra ${data.scanned} đơn`;
+  $("result-subtitle").textContent = `Từ khóa “${data.query || ""}” · Đã kiểm tra ${data.scanned} đơn`;
   $("partial-warning").classList.toggle("hidden", !data.partial);
   const results = $("results");
   if (!data.orders.length) {
@@ -47,9 +47,13 @@ function renderOrders(data) {
     const carrierUnknown = !order.carrier || order.carrier === "Chưa xác định";
     const items = order.items && order.items.length
       ? order.items.map(item => `<div class="product-row">
-          <div><div class="product-name">${escapeHtml(item.name)}${item.variant ? ` · ${escapeHtml(item.variant)}` : ""}</div>
-          ${item.sku ? `<div class="product-sku">SKU: ${escapeHtml(item.sku)}</div>` : ""}
-          </div><div class="qty">× ${Number(item.quantity) || 0}</div>
+          <div class="product-main">
+            <div class="sku-line">
+              <span class="product-sku">${item.sku ? escapeHtml(item.sku) : "Chưa có SKU"}</span>
+              <span class="qty">× ${Number(item.quantity) || 0}</span>
+            </div>
+            <div class="product-name">${escapeHtml(item.name)}${item.variant ? ` · ${escapeHtml(item.variant)}` : ""}</div>
+          </div>
         </div>`).join("")
       : `<div class="empty-products">API chưa trả về chi tiết sản phẩm cho đơn này.</div>`;
     return `<article class="order-card">
@@ -58,14 +62,18 @@ function renderOrders(data) {
         <div class="order-date">${escapeHtml(fmtDate(order.createdAt))}</div></div>
         <span class="carrier ${carrierUnknown ? "unknown" : ""}">${escapeHtml(order.carrier || "Chưa xác định")}</span>
       </div>
-      ${order.trackingCode ? `<div class="product-sku" style="margin-top:8px">Mã vận đơn: ${escapeHtml(order.trackingCode)}</div>` : ""}
+      ${order.trackingCode ? `<div class="tracking-code">Mã vận đơn: ${escapeHtml(order.trackingCode)}</div>` : ""}
       <div class="section-label">SẢN PHẨM · SỐ LƯỢNG</div>
       ${items}
     </article>`;
   }).join("");
 }
-async function search(last4) {
-  if (!/^\d{4}$/.test(last4)) return;
+async function search(query) {
+  query = String(query || "").trim();
+  if (query.length < 2) {
+    setStatus("Nhập ít nhất 2 ký tự để tra cứu.", "error");
+    return;
+  }
   if (activeController) activeController.abort();
   activeController = new AbortController();
   $("search-button").disabled = true;
@@ -74,7 +82,7 @@ async function search(last4) {
   $("results").innerHTML = `<div class="empty-state">Đang tìm các đơn mới nhất…</div>`;
   setStatus("Đang kết nối Sapo…");
   try {
-    const response = await fetch(`/api/search?last4=${encodeURIComponent(last4)}`, {
+    const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
       credentials: "same-origin",
       signal: activeController.signal
     });
@@ -97,10 +105,9 @@ $("search-form").addEventListener("submit", event => {
   search($("last4").value.trim());
 });
 $("last4").addEventListener("input", event => {
-  const value = event.target.value.replace(/\D/g, "").slice(0, 4);
-  event.target.value = value;
+  const value = event.target.value;
   clearTimeout(searchTimer);
-  if (value.length === 4) searchTimer = setTimeout(() => search(value), 220);
+  if (value.trim().length >= 2) searchTimer = setTimeout(() => search(value), 500);
 });
 $("clear").addEventListener("click", () => {
   $("last4").value = "";

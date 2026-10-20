@@ -119,12 +119,15 @@ function mapOrder(o) {
 }
 async function fetchOrdersPage(config, page) {
   const url = new URL("/v2/orders", config.origin);
+  // Match the query shape used by the working Sapo SKU aggregation extension.
+  // connectionIds/channelType should be copied from its captured sapoSkuReportAuth
+  // when available; the other three fields have safe defaults matching that extension.
   const params = {
     channelType: process.env.SAPO_CHANNEL_TYPE,
     connectionIds: process.env.SAPO_CONNECTION_IDS,
-    sortBy: process.env.SAPO_SORT_BY,
-    orderBy: process.env.SAPO_ORDER_BY,
-    channelOrderStatus: process.env.SAPO_CHANNEL_ORDER_STATUS
+    sortBy: process.env.SAPO_SORT_BY || "ISSUED_AT",
+    orderBy: process.env.SAPO_ORDER_BY || "desc",
+    channelOrderStatus: process.env.SAPO_CHANNEL_ORDER_STATUS || "READY_TO_SHIP,RETRY_SHIP"
   };
   for (const [key, value] of Object.entries(params)) if (value) url.searchParams.set(key, value);
   url.searchParams.set("page", String(page));
@@ -144,9 +147,11 @@ async function fetchOrdersPage(config, page) {
   }
 }
 app.get("/api/search", async (req, res) => {
-  const suffix = String(req.query.last4 || "").replace(/\D/g, "");
-  if (!/^\d{4}$/.test(suffix)) return res.status(400).json({ error: "Nhập đúng 4 chữ số cuối của mã đơn." });
-  const cached = cache.get(suffix);
+  const query = String(req.query.q || req.query.last4 || "").normalize("NFC").trim().toLocaleLowerCase("vi-VN");
+  if (query.length < 2) return res.status(400).json({ error: "Nhập ít nhất 2 ký tự của mã đơn hoặc mã vận đơn." });
+  if (query.length > 100) return res.status(400).json({ error: "Từ khóa quá dài." });
+  const cacheKey = query;
+  const cached = cache.get(cacheKey);
   if (cached && cached.expires > Date.now()) return res.json({ ...cached.data, cached: true });
   try {
     const config = getSapoConfig();
@@ -161,17 +166,17 @@ app.get("/api/search", async (req, res) => {
     }
     const matches = all.map(mapOrder).filter(o => {
       const candidates = [o.code, o.trackingCode].filter(Boolean);
-      return candidates.some(code => code.replace(/\D/g, "").endsWith(suffix));
+      return candidates.some(code => String(code).normalize("NFC").toLocaleLowerCase("vi-VN").includes(query));
     }).sort((a, b) => b.createdTs - a.createdTs);
     const data = {
-      last4: suffix,
+      query,
       count: matches.length,
       orders: matches,
       scanned: all.length,
       partial: totalPages >= MAX_PAGES && all.length < first.total,
       checkedAt: new Date().toISOString()
     };
-    cache.set(suffix, { expires: Date.now() + CACHE_MS, data });
+    cache.set(cacheKey, { expires: Date.now() + CACHE_MS, data });
     res.json(data);
   } catch (error) {
     const message = error && error.message ? error.message : "Không thể kết nối Sapo.";
